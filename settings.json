@@ -1,0 +1,42 @@
+import { NextResponse } from 'next/server';
+import { getSession } from '@/lib/auth';
+import { getConversationsForUser, getOrCreateConversation, getUserById, safeUser, getMessages } from '@/lib/store';
+
+export async function GET() {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: 'Unauthorised.' }, { status: 401 });
+
+  const convos = getConversationsForUser(session.sub).map((c) => {
+    const otherId = c.participants.find((id) => id !== session.sub);
+    const other = getUserById(otherId);
+    const msgs = getMessages(c.id);
+    const last = msgs[msgs.length - 1] ?? null;
+    return {
+      ...c,
+      otherUser: other ? safeUser(other) : null,
+      lastMessage: last,
+      messageCount: msgs.length,
+    };
+  }).sort((a, b) => {
+    const aTime = a.lastMessage?.sentAt ?? a.createdAt;
+    const bTime = b.lastMessage?.sentAt ?? b.createdAt;
+    return new Date(bTime) - new Date(aTime);
+  });
+
+  return NextResponse.json({ conversations: convos });
+}
+
+export async function POST(req) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: 'Unauthorised.' }, { status: 401 });
+
+  const { recipientId } = await req.json();
+  if (!recipientId) return NextResponse.json({ error: 'recipientId required.' }, { status: 400 });
+  if (recipientId === session.sub) return NextResponse.json({ error: 'Cannot message yourself.' }, { status: 400 });
+
+  const recipient = getUserById(recipientId);
+  if (!recipient) return NextResponse.json({ error: 'User not found.' }, { status: 404 });
+
+  const convo = getOrCreateConversation(session.sub, recipientId);
+  return NextResponse.json({ conversation: convo });
+}
